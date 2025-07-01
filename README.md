@@ -1,2 +1,7 @@
-# sed_fitting
-Codes to fit SEDs to mock observations with Powderday and Prospector and compare dust mass
+# SED Fitting with Powderday and Prospector
+## Overview
+This repository contains code to generate SEDs from mock observations (in progress), fit model SEDs to these mock SEDs (in progress), and infer the dust mass in simulated galaxies to the actual dust mass. The codes used in the first two tasks are adapted from [smlower](https://github.com/smlower/prospector_tutorial) using the packages [```Prospector```](https://github.com/bd-j/prospector) and [```Powderday```](https://github.com/dnarayanan/powderday) and the codes for the third task is original. 
+
+Here is a brief description of the codes currently in the repository:
+- ```infer_dustmass.py```: uses generated data from ```Powderday``` SEDs to infer dust mass quantiles for each simulated galaxy within a snapshot. Parameters: ```print/save```: printing versus saving the inferred dust masses to a pickle file. ```para/nonpara```: load data from parametric or nonparametric fitted SED. ```index/num```: load galaxies based on their index or galaxy number. ```snap```: snapshot number you are loading galaxies from. ```first_gal```: first galaxy you want to infer dust mass of. ```last_gal*```: optional parameter. If you just want to infer dust mass of one galaxy, leave blank. If you want a range, this is the last galaxy in the range.
+- ```get_dustmass.py```: loads the actual dust masses from ```CAESAR``` galaxies for a given snapshot. Parameters are the same as defined above, except there is no ```para/nonpara```, as that only applies to inferring the dust mass.
