@@ -200,8 +200,7 @@ gal = sys.argv[2]
 
 if __name__ == '__main__':
     
-    pd_dir = sed_path+'gal'+str(gal)+'_ml12/snap'+str(snap)+'/snap'+str(snap)+'.galaxy0.rtout.sed'
-    #pd_dir =sed_path+'snap'+str(snap)+'.galaxy'+str(gal)+'.rtout.sed'
+    pd_dir =sed_path+'snap'+str(snap)+'.galaxy'+str(gal)+'.rtout.sed'
     obs, model, sps = build_all(pd_dir,**run_params)
     run_params["sps_libraries"] = sps.ssp.libraries
     run_params["param_file"] = __file__
