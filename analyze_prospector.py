@@ -1,0 +1,195 @@
+## Imports
+from prospect.models import priors, transforms, sedmodel
+from prospect.sources import CSPSpecBasis, FastStepBasis
+from sedpy.observate import load_filters
+from astropy import constants
+from astropy import units as u
+from astropy.cosmology import FlatLambdaCDM
+from hyperion.model import ModelOutput
+import numpy as np
+from prospect.io import read_results as pread
+from tqdm.auto import tqdm
+from corner import quantile
+import math, pickle, sys, sedpy
+
+snap_num = sys.argv[1]
+gal_num = sys.argv[2]
+prior_setup = sys.argv[3] # Currently must be either "original", "priors1", or "priors2"
+
+sed_path = '/orange/narayanan/leisheri/pd_sed_files/'
+h5_path = '/orange/narayanan/leisheri/prospector/h5/'
+output_path = '/orange/narayanan/leisheri/prospector/'
+
+## Redshift
+snap_dict = {'134':2.754,'074':6.014,'080':5.530,'087':5.024,'095':4.515,'104':4.015,'115':3.489,'127':3.003,'142':2.496,'160':2.0,'183':1.497,'212':1.007,'252':0.501,'305':0.0}
+
+z = snap_dict[snap_num]
+
+def zfrac_to_masses_log(logmass=None, z_fraction=None, agebins=None, **extras):
+    sfr_fraction = np.zeros(len(z_fraction) + 1)
+    sfr_fraction[0] = 1.0 - z_fraction[0]
+    for i in range(1, len(z_fraction)):
+        sfr_fraction[i] = np.prod(z_fraction[:i]) * (1.0 - z_fraction[i])
+    sfr_fraction[-1] = 1 - np.sum(sfr_fraction[:-1])
+    time_per_bin = np.diff(10**agebins, axis=-1)[:, 0]
+    mass_fraction = sfr_fraction * np.array(time_per_bin)
+    mass_fraction /= mass_fraction.sum()
+
+    masses = 10**logmass * mass_fraction
+    return masses
+
+def build_model(**kwargs):
+    print('building model')
+    model_params = []
+    cosmo = FlatLambdaCDM(H0=68, Om0=0.3, Tcmb0=2.725)
+
+    if(z<10**-4):
+        dl = (10*u.Mpc)
+    else:
+        dl = cosmo.luminosity_distance(z).to(u.Mpc)
+        
+    #Unchanging parameters
+    model_params.append({'name': "lumdist", "N": 1, "isfree": False,"init": dl.value,"units": "Mpc"})
+    model_params.append({'name': 'imf_type', 'N': 1,'isfree': False,'init': 2})
+    model_params.append({'name': 'duste_umin', 'N': 1,'isfree': True,'init': 1.0,'prior': priors.TopHat(mini=0.1, maxi=25.0)})
+    model_params.append({'name': 'duste_qpah', 'N': 1,'isfree': True,'init': 3.0,'prior': priors.TopHat(mini=0.0, maxi=10.0)})  
+    model_params.append({'name': 'duste_gamma', 'N': 1,'isfree': True,'init': 0.01,'prior': priors.TopHat(mini=0.0, maxi=1.0)})
+    model_params.append({'name': 'add_agb_dust_model', 'N': 1,'isfree': False,'init': 0})
+    model_params.append({'name': 'logmass', 'N': 1,'isfree': True,'init': 10.0,'prior': priors.Uniform(mini=9., maxi=12.)})
+    model_params.append({'name': 'logzsol', 'N': 1,'isfree': True,'init': -0.5,'prior': priors.Uniform(mini=-1., maxi=0.2)})
+    model_params.append({'name': "sfh", "N": 1, "isfree": False, "init": 3})
+    model_params.append({'name': "mass", 'N': 3, 'isfree': False, 'init': 1., 'depends_on':zfrac_to_masses_log})
+    model_params.append({'name': "agebins", 'N': 1, 'isfree': False,'init': []})
+    model_params.append({'name': "z_fraction", "N": 2, 'isfree': True, 'init': [0, 0],'prior': priors.Beta(alpha=1.0, beta=1.0, mini=0.0, maxi=1.0)})    
+    
+    #Changing parameters
+    if prior_setup == "original":
+        model_params.append({'name': 'dust_type', 'N': 1,'isfree': False,'init': 2,'prior': None})
+        model_params.append({'name': 'dust2', 'N': 1,'isfree': True, 'init': 0.1,'prior': priors.ClippedNormal(mini=0.0, maxi=2.0, mean=0.0, sigma=0.3)})
+        model_params.append({'name': 'add_dust_emission', 'N': 1,'isfree': False,'init': 1,'prior': None})
+    
+    elif prior_setup == "priors1":
+        model_params.append({'name': 'dust_type', 'N': 1,'isfree': False,'init': 0,'prior': None})
+        model_params.append({'name': 'dust2', 'N': 1,'isfree': True, 'init': 0.1,'prior': priors.TopHat(mini=0.0, maxi=5.0)})
+        model_params.append({'name': 'dust_index', 'N': 1,'isfree': True, 'init': -0.7,'prior': priors.TopHat(mini=-3.0, maxi=0.0)})
+        model_params.append({'name': 'add_dust_emission', 'N': 1,'isfree': False,'init': 1,'prior': None})
+        
+    elif prior_setup == "priors2":
+        model_params.append({'name': 'dust1', 'N': 1,'isfree': True, 'init': 0.1,'prior': priors.TopHat(mini=0.0, maxi=5.0)})
+        model_params.append({'name': 'dust1_index', 'N': 1,'isfree': True, 'init': -1.0,'prior': priors.TopHat(mini=-3.0, maxi=0.0)})
+        model_params.append({'name': 'dust2', 'N': 1,'isfree': True, 'init': 0.1,'prior': priors.TopHat(mini=0.0, maxi=5.0)})
+        model_params.append({'name': 'mwr', 'N': 1,'isfree': True, 'init': 3.1,'prior': priors.TopHat(mini=0.0, maxi=10.0)})
+        model_params.append({'name': 'uvb', 'N': 1,'isfree': True, 'init': 1.0,'prior': priors.TopHat(mini=0.0, maxi=5.0)})
+
+    #here we set the number and location of the timebins, and edit the other SFH parameters to match in size
+    n = [p['name'] for p in model_params]
+    tuniv = np.round(cosmo.age(z).to('Gyr').value,decimals=1)                                                                                                                                                                                                         
+    nbins=10
+    tbinmax = (tuniv * 0.85) * 1e9 #earliest time bin goes from age = 0 to age = 2.1 Gyr  
+    lim1, lim2 = 7.47, 8.0 #most recent time bins at 30 Myr and 100 Myr ago                                                                                                                                                                                                 
+    agelims = [0,lim1] + np.linspace(lim2,np.log10(tbinmax),nbins-2).tolist() + [np.log10(tuniv*1e9)]
+    agebins = np.array([agelims[:-1], agelims[1:]])
+    
+    ncomp = nbins - 1
+    # constant SFR
+    zinit = np.array([(i-1)/float(i) for i in range(ncomp, 1, -1)])
+    # Set up the prior in `z` variables that corresponds to a dirichlet in sfr fraction. 
+    alpha = np.arange(ncomp-1, 0, -1)
+    zprior = priors.Beta(alpha=alpha, beta=np.ones_like(alpha), mini=0.0, maxi=1.0)
+
+    model_params[n.index('mass')]['N'] = nbins
+    model_params[n.index('agebins')]['N'] = nbins
+    model_params[n.index('agebins')]['init'] = agebins.T
+    model_params[n.index('z_fraction')]['N'] = nbins-1
+    model_params[n.index('z_fraction')]['init'] = zinit
+    model_params[n.index('z_fraction')]['prior'] = zprior
+
+    model = sedmodel.SedModel(model_params)
+
+
+    return model
+
+def build_obs(pd_dir, **kwargs):
+        
+    cosmo = FlatLambdaCDM(H0=68, Om0=0.3, Tcmb0=2.725)
+    m = ModelOutput(pd_dir)
+    wav, lum = m.get_sed(inclination=0,aperture=-1)
+    wav  = np.asarray(wav)*u.micron                                                                                                                                    
+    wav = wav.to(u.AA)
+    lum = np.asarray(lum)*u.erg/u.s
+    dl = (10*u.pc).to(u.cm) #setting luminosity distance to 10pc since we're at z=0
+    flux = lum/(4.*3.14*dl**2.) #*(1+z) this is where you would include the 1+z term for the flux
+    nu = constants.c.cgs/(wav.to(u.cm))
+    nu = nu.to(u.Hz)
+    flux /= nu
+    flux = flux.to(u.Jy)
+    maggies = flux / 3631. 
+    
+    flam = lum/(4.*math.pi*(dl)**2.)/wav/(1+z)
+    flam = flam.to(u.erg/u.s/(u.cm**2)/u.AA)
+    
+    # these filter names / transmission data come from sedpy
+    # it's super easy to add new filters to the database but for now we'll just rely on what sedpy already has
+    jwst_nircam = ['jwst_f070w', 'jwst_f090w', 'jwst_f115w', 'jwst_f150w', 'jwst_f200w', 
+                   'jwst_f277w', 'jwst_f356w', 'jwst_f444w']
+    herschel_pacs = ['herschel_pacs_70', 'herschel_pacs_100', 'herschel_pacs_160']
+    herschel_spire = ['herschel_spire_250', 'herschel_spire_350', 'herschel_spire_500']
+    filternames = (jwst_nircam + herschel_pacs + herschel_spire)
+    
+    filters_unsorted = load_filters(filternames)
+    waves_unsorted = [x.wave_mean for x in filters_unsorted]
+    filters = [x for _,x in sorted(zip(waves_unsorted,filters_unsorted))]
+        
+    gal_phot = sedpy.observate.getSED(np.flip(wav.value),np.flip(flam.value),filterlist = filters,linear_flux = True)
+    gal_phot = np.array(gal_phot)
+    gal_phot_err = gal_phot * 0.03
+    
+    obs = {}
+    #put some useful things in our dictionary. Prospector exepcts to see, at the least, the filters, photmetry
+    #and errors, and if available, the spectrum information. I also include the full powderday SED for easy 
+    #access later
+    obs['filters'] = filters
+    obs['maggies'] = gal_phot
+    obs['maggies_unc'] = gal_phot_err
+    obs['phot_mask'] = np.isfinite(gal_phot)
+    obs['wavelength'] = None
+    obs['spectrum'] = None
+    obs['pd_sed'] = maggies
+    obs['pd_wav'] = wav
+
+    return obs
+
+obs = build_obs(sed_path+'snap'+str(snap)+'.galaxy'+str(gal)+'.rtout.sed')
+
+if prior_setup != "original":
+    results, observations_dict, model = pread.results_from(h5_path+'snap_'+str(snap_num)+'_galaxy_'+str(gal_num)+'_nonpara_'+str(prior_setup)+'_fit.h5')
+else:
+    results, observations_dict, model = pread.results_from(h5_path+'snap_'+str(snap_num)+'_galaxy_'+str(gal_num)+'_nonpara_fit.h5')
+    
+sps = pread.get_sps(results)
+model_params = model.theta_labels()
+
+seds_spec = []
+seds_mag = []
+surviving_mass_frac = []
+dmass = []
+
+weights = results.get('weights',None) #likelihood values
+idx = np.argsort(weights)[-5000:] #select 5000 most likely
+for i in tqdm(idx):
+    thetas = results['chain'][i]
+    spec, mags, mass_frac = model.predict(thetas,sps=sps,obs=observations_dict)
+    seds_spec.append(spec)
+    seds_mag.append(mags)
+    surviving_mass_frac.append(mass_frac)
+    dmass.append(sps.ssp.dust_mass)
+
+dmass_quan = quantile(np.log10(dmass), [.16, .5, .84], weights=results['weights'][idx])
+data_props = {'dust_mass_quan': dmass_quan, 'spec': seds_spec, 'mag': seds_mag}
+
+if prior_setup != "original":
+    with open(output_path+'snap'+str(snap_num)+'_gal'+str(gal_num)+'_props_nonpara_'+str(prior_setup)+'.pkl', 'wb') as file:
+        pickle.dump(data_props, file)
+else:
+    with open(output_path+'snap'+str(snap_num)+'_gal'+str(gal_num)+'_props_nonpara.pkl', 'wb') as file:
+        pickle.dump(data_props, file)
