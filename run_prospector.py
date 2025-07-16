@@ -9,18 +9,25 @@ from astropy import constants
 from hyperion.model import ModelOutput
 from prospect.models import priors, sedmodel
 
-sed_path = '/orange/narayanan/leisheri/pd_sed_files/'
-h5_path = '/orange/narayanan/leisheri/prospector/h5/'
+## Redshift
+snap_dict = {'134':2.754,'074':6.014,'080':5.530,'087':5.024,'095':4.515,'104':4.015,'115':3.489,'127':3.003,'142':2.496,'160':2.0,'183':1.497,'212':1.007,'252':0.501,'305':0.0}
+smgl_snap_dict = {'001':13.989,'002':13.011,'003':11.980,'004':11.025,'005':9.990,'006':9.000,'007':8.099}
 
 snap_num = sys.argv[1]
 gal_num = sys.argv[2]
-prior_setup = sys.argv[3] # Currently must be either "original", "priors1", or "priors2"
+prior_setup = sys.argv[3]
+galaxies = sys.argv[4]
 
-# Redshift
-snap_dict = {'134':2.754,'074':6.014,'080':5.530,'087':5.024,'95':4.515,'104':4.015,'115':3.489,'127':3.003,'142':2.496,'160':2.0,'183':1.497,'212':1.007,'252':0.501,'305':0.0}
-
-z = snap_dict[snap_num]
-
+if galaxies == 'subfind':
+    sed_path = '/blue/narayanan/jkelleyderzon/arepo_runs/UVlum_zooms/pd_clump_tests/pd_clump_CFoff/m50/z4/'
+    h5_path = '/orange/narayanan/leisheri/prospector/smuggle/h5/'
+    z = smgl_snap_dict[snap_num]
+    
+elif galaxies == 'caesar':
+    sed_path = '/orange/narayanan/leisheri/pd_sed_files/'
+    h5_path = '/orange/narayanan/leisheri/prospector/h5/'
+    z = snap_dict[snap_num]
+    
 def find_nearest(array,value):
     idx = (np.abs(np.array(array)-value)).argmin()
     return idx
@@ -67,6 +74,7 @@ def build_model(**kwargs):
         
     #Unchanging parameters
     model_params.append({'name': "lumdist", "N": 1, "isfree": False,"init": dl.value,"units": "Mpc"})
+    model_params.append({'name':'zred','N':1,'isfree':False,'init':z})   
     model_params.append({'name': 'imf_type', 'N': 1,'isfree': False,'init': 2})
     model_params.append({'name': 'duste_umin', 'N': 1,'isfree': True,'init': 1.0,'prior': priors.TopHat(mini=0.1, maxi=25.0)})
     model_params.append({'name': 'duste_qpah', 'N': 1,'isfree': True,'init': 3.0,'prior': priors.TopHat(mini=0.0, maxi=10.0)})  
@@ -131,11 +139,16 @@ def build_obs(pd_dir, **kwargs):
     cosmo = FlatLambdaCDM(H0=68, Om0=0.3, Tcmb0=2.725)
     m = ModelOutput(pd_dir)
     wav, lum = m.get_sed(inclination=0,aperture=-1)
-    wav  = np.asarray(wav)*u.micron                                                                                                                                    
+    wav  = np.asarray(wav)*u.micron
+    
+    if(z<10**-4):
+        dl = (10*u.Mpc)
+    else:
+        dl = cosmo.luminosity_distance(z).to(u.Mpc)
+    
     wav = wav.to(u.AA)
     lum = np.asarray(lum)*u.erg/u.s
-    dl = (10*u.pc).to(u.cm) #setting luminosity distance to 10pc since we're at z=0
-    flux = lum/(4.*3.14*dl**2.) #*(1+z) this is where you would include the 1+z term for the flux
+    flux = lum/(4.*3.14*dl**2.)*(1+z)  #this is where you would include the 1+z term for the flux
     nu = constants.c.cgs/(wav.to(u.cm))
     nu = nu.to(u.Hz)
     flux /= nu
@@ -144,6 +157,8 @@ def build_obs(pd_dir, **kwargs):
     
     flam = lum/(4.*math.pi*(dl)**2.)/wav/(1+z)
     flam = flam.to(u.erg/u.s/(u.cm**2)/u.AA)
+    
+    wav = wav*(1+z)
     
     # these filter names / transmission data come from sedpy
     # it's super easy to add new filters to the database but for now we'll just rely on what sedpy already has
@@ -195,12 +210,17 @@ run_params = {'verbose':False,
               'nested_weight_kwargs': {"pfrac": 1.0},
               }
 
-snap = sys.argv[1]
-gal = sys.argv[2]
+gal = gal_num
+snap = snap_num
 
 if __name__ == '__main__':
     
-    pd_dir =sed_path+'snap'+str(snap)+'.galaxy'+str(gal)+'.rtout.sed'
+    if galaxies == 'subfind':
+        pd_dir = sed_path+'gal'+str(gal)+'_ml12/snap'+str(snap)+'/snap'+str(snap)+'.galaxy0.rtout.sed'
+        
+    elif galaxies == 'caesar':
+        pd_dir = sed_path+'snap'+str(snap)+'.galaxy'+str(gal)+'.rtout.sed'
+        
     obs, model, sps = build_all(pd_dir,**run_params)
     run_params["sps_libraries"] = sps.ssp.libraries
     run_params["param_file"] = __file__
