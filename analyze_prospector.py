@@ -12,18 +12,26 @@ from tqdm.auto import tqdm
 from corner import quantile
 import math, pickle, sys, sedpy
 
-snap_num = sys.argv[1]
-gal_num = sys.argv[2]
-prior_setup = sys.argv[3] # Currently must be either "original", "priors1", or "priors2"
-
-sed_path = '/orange/narayanan/leisheri/pd_sed_files/'
-h5_path = '/orange/narayanan/leisheri/prospector/h5/'
-output_path = '/orange/narayanan/leisheri/prospector/'
-
 ## Redshift
 snap_dict = {'134':2.754,'074':6.014,'080':5.530,'087':5.024,'095':4.515,'104':4.015,'115':3.489,'127':3.003,'142':2.496,'160':2.0,'183':1.497,'212':1.007,'252':0.501,'305':0.0}
+smgl_snap_dict = {'001':13.989,'002':13.011,'003':11.980,'004':11.025,'005':9.990,'006':9.000,'007':8.099}
 
-z = snap_dict[snap_num]
+snap_num = sys.argv[1]
+gal_num = sys.argv[2]
+prior_setup = sys.argv[3]
+galaxies = sys.argv[4]
+
+if galaxies == 'subfind':
+    sed_path = '/blue/narayanan/jkelleyderzon/arepo_runs/UVlum_zooms/pd_clump_tests/pd_clump_CFoff/m50/z4/'
+    h5_path = '/orange/narayanan/leisheri/prospector/smuggle/h5/'
+    output_path = '/orange/narayanan/leisheri/prospector/smuggle/3results/'
+    z = smgl_snap_dict[snap_num]
+
+elif galaxies == 'caesar':
+    sed_path = '/orange/narayanan/leisheri/pd_sed_files/'
+    h5_path = '/orange/narayanan/leisheri/prospector/h5/'
+    output_path = '/orange/narayanan/leisheri/prospector/3results/'
+    z = snap_dict[snap_num]
 
 def zfrac_to_masses_log(logmass=None, z_fraction=None, agebins=None, **extras):
     sfr_fraction = np.zeros(len(z_fraction) + 1)
@@ -50,6 +58,7 @@ def build_model(**kwargs):
         
     #Unchanging parameters
     model_params.append({'name': "lumdist", "N": 1, "isfree": False,"init": dl.value,"units": "Mpc"})
+    model_params.append({'name':'zred','N':1,'isfree':False,'init':z})   
     model_params.append({'name': 'imf_type', 'N': 1,'isfree': False,'init': 2})
     model_params.append({'name': 'duste_umin', 'N': 1,'isfree': True,'init': 1.0,'prior': priors.TopHat(mini=0.1, maxi=25.0)})
     model_params.append({'name': 'duste_qpah', 'N': 1,'isfree': True,'init': 3.0,'prior': priors.TopHat(mini=0.0, maxi=10.0)})  
@@ -83,18 +92,18 @@ def build_model(**kwargs):
 
     #here we set the number and location of the timebins, and edit the other SFH parameters to match in size
     n = [p['name'] for p in model_params]
-    tuniv = np.round(cosmo.age(z).to('Gyr').value,decimals=1)                                                                                                                                                                                                         
+    cosmo = FlatLambdaCDM(H0=68, Om0=0.3, Tcmb0=2.725)
+    tuniv = np.round(cosmo.age(z).to('Gyr').value,decimals=1)                                                                                                                                                                                                          
     nbins=10
-    tbinmax = (tuniv * 0.85) * 1e9 #earliest time bin goes from age = 0 to age = 2.1 Gyr  
+    tbinmax = (tuniv * 0.8) * 1e9 #earliest time bin goes from age = 0 to age = 2.8 Gyr
     lim1, lim2 = 7.47, 8.0 #most recent time bins at 30 Myr and 100 Myr ago                                                                                                                                                                                                 
     agelims = [0,lim1] + np.linspace(lim2,np.log10(tbinmax),nbins-2).tolist() + [np.log10(tuniv*1e9)]
     agebins = np.array([agelims[:-1], agelims[1:]])
-    
-    ncomp = nbins - 1
-    # constant SFR
-    zinit = np.array([(i-1)/float(i) for i in range(ncomp, 1, -1)])
-    # Set up the prior in `z` variables that corresponds to a dirichlet in sfr fraction. 
-    alpha = np.arange(ncomp-1, 0, -1)
+
+    zinit = np.array([(i-1)/float(i) for i in range(nbins, 1, -1)])
+    # Set up the prior in `z` variables that corresponds to a dirichlet in sfr
+    # fraction. 
+    alpha = np.arange(nbins-1, 0, -1)
     zprior = priors.Beta(alpha=alpha, beta=np.ones_like(alpha), mini=0.0, maxi=1.0)
 
     model_params[n.index('mass')]['N'] = nbins
@@ -114,19 +123,26 @@ def build_obs(pd_dir, **kwargs):
     cosmo = FlatLambdaCDM(H0=68, Om0=0.3, Tcmb0=2.725)
     m = ModelOutput(pd_dir)
     wav, lum = m.get_sed(inclination=0,aperture=-1)
-    wav  = np.asarray(wav)*u.micron                                                                                                                                    
+    wav  = np.asarray(wav)*u.micron         
+    
+    if(z<10**-4):
+        dl = (10*u.Mpc)
+    else:
+        dl = cosmo.luminosity_distance(z).to(u.Mpc)
+    
     wav = wav.to(u.AA)
     lum = np.asarray(lum)*u.erg/u.s
-    dl = (10*u.pc).to(u.cm) #setting luminosity distance to 10pc since we're at z=0
-    flux = lum/(4.*3.14*dl**2.) #*(1+z) this is where you would include the 1+z term for the flux
+    flux = lum/(4.*3.14*dl**2.)*(1+z)  #this is where you would include the 1+z term for the flux
     nu = constants.c.cgs/(wav.to(u.cm))
     nu = nu.to(u.Hz)
     flux /= nu
     flux = flux.to(u.Jy)
-    maggies = flux / 3631. 
+    maggies = flux / 3631.  
     
     flam = lum/(4.*math.pi*(dl)**2.)/wav/(1+z)
     flam = flam.to(u.erg/u.s/(u.cm**2)/u.AA)
+    
+    wav = wav*(1+z)
     
     # these filter names / transmission data come from sedpy
     # it's super easy to add new filters to the database but for now we'll just rely on what sedpy already has
@@ -159,7 +175,11 @@ def build_obs(pd_dir, **kwargs):
 
     return obs
 
-obs = build_obs(sed_path+'snap'+str(snap)+'.galaxy'+str(gal)+'.rtout.sed')
+if galaxies == 'subfind':
+    obs = build_obs(sed_path+'gal'+str(gal_num)+'_ml12/snap'+str(snap_num)+'/snap'+str(snap_num)+'.galaxy0.rtout.sed')
+
+elif galaxies == 'caesar':
+    obs = build_obs(sed_path+'snap'+str(snap_num)+'.galaxy'+str(gal_num)+'.rtout.sed')
 
 if prior_setup != "original":
     results, observations_dict, model = pread.results_from(h5_path+'snap_'+str(snap_num)+'_galaxy_'+str(gal_num)+'_nonpara_'+str(prior_setup)+'_fit.h5')
