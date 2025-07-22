@@ -8,29 +8,17 @@ from sedpy.observate import load_filters
 from astropy import constants
 from hyperion.model import ModelOutput
 from prospect.models import priors, sedmodel
-
-## Redshift
-snap_dict = {'134':2.754,'074':6.014,'080':5.530,'087':5.024,'095':4.515,'104':4.015,'115':3.489,'127':3.003,'142':2.496,'160':2.0,'183':1.497,'212':1.007,'252':0.501,'305':0.0}
-smgl_snap_dict = {'001':13.989,'002':13.011,'003':11.980,'004':11.025,'005':9.990,'006':9.000,'007':8.099}
+from prospect.sources import FastStepBasis
+import functions as fn
 
 snap_num = sys.argv[1]
 gal_num = sys.argv[2]
 prior_setup = sys.argv[3]
 galaxies = sys.argv[4]
 
-if galaxies == 'subfind':
-    sed_path = '/blue/narayanan/jkelleyderzon/arepo_runs/UVlum_zooms/pd_clump_tests/pd_clump_CFoff/m50/z4/'
-    h5_path = '/orange/narayanan/leisheri/prospector/smuggle/h5/'
-    z = smgl_snap_dict[snap_num]
-    
-elif galaxies == 'caesar':
-    sed_path = '/orange/narayanan/leisheri/pd_sed_files/'
-    h5_path = '/orange/narayanan/leisheri/prospector/h5/'
-    z = snap_dict[snap_num]
-    
-def find_nearest(array,value):
-    idx = (np.abs(np.array(array)-value)).argmin()
-    return idx
+sed_path,h5_path,output_path = fn.get_paths(galaxies)
+
+z = fn.redshift(snap_num,galaxies)
 
 def zfrac_to_masses_log(logmass=None, z_fraction=None, agebins=None, **extras):
     sfr_fraction = np.zeros(len(z_fraction) + 1)
@@ -38,17 +26,9 @@ def zfrac_to_masses_log(logmass=None, z_fraction=None, agebins=None, **extras):
     for i in range(1, len(z_fraction)):
         sfr_fraction[i] = np.prod(z_fraction[:i]) * (1.0 - z_fraction[i])
     sfr_fraction[-1] = 1 - np.sum(sfr_fraction[:-1])
-    # convert to mass fractions
     time_per_bin = np.diff(10**agebins, axis=-1)[:, 0]
     mass_fraction = sfr_fraction * np.array(time_per_bin)
     mass_fraction /= mass_fraction.sum()
-
-    if (mass_fraction < 0).any():
-        idx = mass_fraction < 0
-        if np.isclose(mass_fraction[idx],0,rtol=1e-8):
-            mass_fraction[idx] = 0.0
-        else:
-            raise ValueError('The input z_fractions are returning negative masses!')
 
     masses = 10**logmass * mass_fraction
     return masses
@@ -58,7 +38,6 @@ def build_sps(**kwargs):
     This is our stellar population model which generates the spectra for stars of a given age and mass. 
     Because we are using a non parametric SFH model, we do have to use a different SPS model than before 
     """
-    from prospect.sources import FastStepBasis
     sps = FastStepBasis(zcontinuous=1)
     return sps
 
@@ -88,7 +67,7 @@ def build_model(**kwargs):
     model_params.append({'name': "z_fraction", "N": 2, 'isfree': True, 'init': [0, 0],'prior': priors.Beta(alpha=1.0, beta=1.0, mini=0.0, maxi=1.0)})    
     
     #Changing parameters
-    if prior_setup == "original":
+    if prior_setup == "priors0":
         model_params.append({'name': 'dust_type', 'N': 1,'isfree': False,'init': 2,'prior': None})
         model_params.append({'name': 'dust2', 'N': 1,'isfree': True, 'init': 0.1,'prior': priors.ClippedNormal(mini=0.0, maxi=2.0, mean=0.0, sigma=0.3)})
         model_params.append({'name': 'add_dust_emission', 'N': 1,'isfree': False,'init': 1,'prior': None})
@@ -134,66 +113,9 @@ def build_model(**kwargs):
 
     return model
 
-def build_obs(pd_dir, **kwargs):
-        
-    cosmo = FlatLambdaCDM(H0=68, Om0=0.3, Tcmb0=2.725)
-    m = ModelOutput(pd_dir)
-    wav, lum = m.get_sed(inclination=0,aperture=-1)
-    wav  = np.asarray(wav)*u.micron
-    
-    if(z<10**-4):
-        dl = (10*u.Mpc)
-    else:
-        dl = cosmo.luminosity_distance(z).to(u.Mpc)
-    
-    wav = wav.to(u.AA)
-    lum = np.asarray(lum)*u.erg/u.s
-    flux = lum/(4.*3.14*dl**2.)*(1+z)  #this is where you would include the 1+z term for the flux
-    nu = constants.c.cgs/(wav.to(u.cm))
-    nu = nu.to(u.Hz)
-    flux /= nu
-    flux = flux.to(u.Jy)
-    maggies = flux / 3631. 
-    
-    flam = lum/(4.*math.pi*(dl)**2.)/wav/(1+z)
-    flam = flam.to(u.erg/u.s/(u.cm**2)/u.AA)
-    
-    wav = wav*(1+z)
-    
-    # these filter names / transmission data come from sedpy
-    # it's super easy to add new filters to the database but for now we'll just rely on what sedpy already has
-    jwst_nircam = ['jwst_f070w', 'jwst_f090w', 'jwst_f115w', 'jwst_f150w', 'jwst_f200w', 
-                   'jwst_f277w', 'jwst_f356w', 'jwst_f444w']
-    herschel_pacs = ['herschel_pacs_70', 'herschel_pacs_100', 'herschel_pacs_160']
-    herschel_spire = ['herschel_spire_250', 'herschel_spire_350', 'herschel_spire_500']
-    filternames = (jwst_nircam + herschel_pacs + herschel_spire)
-    
-    filters_unsorted = load_filters(filternames)
-    waves_unsorted = [x.wave_mean for x in filters_unsorted]
-    filters = [x for _,x in sorted(zip(waves_unsorted,filters_unsorted))]
-        
-    gal_phot = sedpy.observate.getSED(np.flip(wav.value),np.flip(flam.value),filterlist = filters,linear_flux = True)
-    gal_phot = np.array(gal_phot)
-    gal_phot_err = gal_phot * 0.03
-    
-    obs = {}
-    #put some useful things in our dictionary. Prospector exepcts to see, at the least, the filters, photmetry
-    #and errors, and if available, the spectrum information. I also include the full powderday SED for easy 
-    #access later
-    obs['filters'] = filters
-    obs['maggies'] = gal_phot
-    obs['maggies_unc'] = gal_phot_err
-    obs['phot_mask'] = np.isfinite(gal_phot)
-    obs['wavelength'] = None
-    obs['spectrum'] = None
-    obs['pd_sed'] = maggies
-    obs['pd_wav'] = wav
-
-    return obs
-
 def build_all(pd_dir,**kwargs):
 
-    return (build_obs(pd_dir,**kwargs), build_model(**kwargs),
+    return (fn.build_obs(z,pd_dir,**kwargs), build_model(**kwargs),
             build_sps(**kwargs))
 
 
@@ -224,7 +146,7 @@ if __name__ == '__main__':
     obs, model, sps = build_all(pd_dir,**run_params)
     run_params["sps_libraries"] = sps.ssp.libraries
     run_params["param_file"] = __file__
-    if prior_setup != "original":
+    if prior_setup != "priors0":
         hfile = h5_path+"/snap_"+str(snap)+"_galaxy_"+str(gal)+"_nonpara_"+str(prior_setup)+"_fit.h5"
     else:
         hfile = h5_path+"/snap_"+str(snap)+"_galaxy_"+str(gal)+"_nonpara_fit.h5"
