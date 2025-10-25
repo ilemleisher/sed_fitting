@@ -59,13 +59,18 @@ def build_model(**kwargs):
     model_params.append({'name': 'duste_qpah', 'N': 1,'isfree': True,'init': 3.0,'prior': priors.TopHat(mini=0.0, maxi=10.0)})  
     model_params.append({'name': 'duste_gamma', 'N': 1,'isfree': True,'init': 0.01,'prior': priors.TopHat(mini=0.0, maxi=1.0)})
     model_params.append({'name': 'add_agb_dust_model', 'N': 1,'isfree': False,'init': 0})
-    model_params.append({'name': 'logmass', 'N': 1,'isfree': True,'init': 10.0,'prior': priors.Uniform(mini=9., maxi=12.)})
-    model_params.append({'name': 'logzsol', 'N': 1,'isfree': True,'init': -0.5,'prior': priors.Uniform(mini=-1., maxi=0.2)})
+    model_params.append({'name': 'logmass', 'N': 1,'isfree': True,'init': 10.0,'prior': priors.Uniform(mini=6., maxi=14.)})
+    model_params.append({'name': 'logzsol', 'N': 1,'isfree': True,'init': -0.5,'prior': priors.Uniform(mini=-5., maxi=0.5)})
     model_params.append({'name': "sfh", "N": 1, "isfree": False, "init": 3})
     model_params.append({'name': "mass", 'N': 3, 'isfree': False, 'init': 1., 'depends_on':zfrac_to_masses_log})
     model_params.append({'name': "agebins", 'N': 1, 'isfree': False,'init': []})
     model_params.append({'name': "z_fraction", "N": 2, 'isfree': True, 'init': [0, 0],'prior': priors.Beta(alpha=1.0, beta=1.0, mini=0.0, maxi=1.0)})    
-    
+
+
+# enables nonlinear dust attentuation on stars
+    model_params.append({'name': 'frac_nodust', 'N': 1,'isfree': True,'init': .5,'prior': priors.Uniform(mini=0., maxi=1.)})
+
+
     #Changing parameters
     if prior_setup == "priors0":
         model_params.append({'name': 'dust_type', 'N': 1,'isfree': False,'init': 2,'prior': None})
@@ -79,6 +84,7 @@ def build_model(**kwargs):
         model_params.append({'name': 'add_dust_emission', 'N': 1,'isfree': False,'init': 1,'prior': None})
         
     elif prior_setup == "priors2":
+        #missing dust type
         model_params.append({'name': 'dust1', 'N': 1,'isfree': True, 'init': 0.1,'prior': priors.TopHat(mini=0.0, maxi=5.0)})
         model_params.append({'name': 'dust1_index', 'N': 1,'isfree': True, 'init': -1.0,'prior': priors.TopHat(mini=-3.0, maxi=0.0)})
         model_params.append({'name': 'dust2', 'N': 1,'isfree': True, 'init': 0.1,'prior': priors.TopHat(mini=0.0, maxi=5.0)})
@@ -110,7 +116,6 @@ def build_model(**kwargs):
 
     model = sedmodel.SedModel(model_params)
 
-
     return model
 
 def build_all(pd_dir,**kwargs):
@@ -138,10 +143,13 @@ snap = snap_num
 if __name__ == '__main__':
     
     if galaxies == 'subfind':
-        pd_dir = sed_path+'gal'+str(gal)+'_ml12/snap'+str(snap)+'/snap'+str(snap)+'.galaxy0.rtout.sed'
-        
+        #pd_dir = sed_path+'gal'+str(gal)+'_ml12/snap'+str(snap)+'/snap'+str(snap)+'.galaxy0.rtout.sed'
+        pd_dir = sed_path+'/snap'+str(snap)+'.galaxy0.rtout.sed'
     elif galaxies == 'caesar':
         pd_dir = sed_path+'snap'+str(snap)+'.galaxy'+str(gal)+'.rtout.sed'
+    elif galaxies == 'arepo':
+        pd_dir = sed_path+'gal'+str(gal)+'_sobol_044/snap'+str(snap)+'/snap'+str(snap)+'.galaxy0.rtout.sed'
+
         
     obs, model, sps = build_all(pd_dir,**run_params)
     run_params["sps_libraries"] = sps.ssp.libraries
