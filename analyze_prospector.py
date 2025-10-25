@@ -28,6 +28,9 @@ if galaxies == 'subfind':
 elif galaxies == 'caesar':
     obs = fn.build_obs(z,sed_path+'snap'+str(snap_num)+'.galaxy'+str(gal_num)+'.rtout.sed')
 
+elif galaxies == 'arepo':
+    obs = fn.build_obs(z,sed_path+'gal'+str(gal_num)+'_sobol_044/snap'+str(snap_num)+'/snap'+str(snap_num)+'.galaxy0.rtout.sed')
+
 if prior_setup != "priors0":
     results, observations_dict, model = pread.results_from(h5_path+'snap_'+str(snap_num)+'_galaxy_'+str(gal_num)+'_nonpara_'+str(prior_setup)+'_fit.h5')
 else:
