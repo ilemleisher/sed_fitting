@@ -11,14 +11,14 @@ from prospect.models import priors, sedmodel
 from prospect.sources import FastStepBasis
 import functions as fn
 
-snap_num = sys.argv[1]
-gal_num = sys.argv[2]
+snap = sys.argv[1]
+gal = sys.argv[2]
 prior_setup = sys.argv[3]
 galaxies = sys.argv[4]
 
 sed_path,h5_path,output_path = fn.get_paths(galaxies)
 
-z = fn.redshift(snap_num,galaxies)
+z = fn.redshift(snap,galaxies)
 
 def zfrac_to_masses_log(logmass=None, z_fraction=None, agebins=None, **extras):
     sfr_fraction = np.zeros(len(z_fraction) + 1)
@@ -137,13 +137,9 @@ run_params = {'verbose':False,
               'nested_weight_kwargs': {"pfrac": 1.0},
               }
 
-gal = gal_num
-snap = snap_num
-
 if __name__ == '__main__':
     
     if galaxies == 'subfind':
-        #pd_dir = sed_path+'gal'+str(gal)+'_ml12/snap'+str(snap)+'/snap'+str(snap)+'.galaxy0.rtout.sed'
         pd_dir = sed_path+'/snap'+str(snap)+'.galaxy0.rtout.sed'
     elif galaxies == 'caesar':
         pd_dir = sed_path+'snap'+str(snap)+'.galaxy'+str(gal)+'.rtout.sed'
